@@ -20,9 +20,11 @@ USER 0
 
 # Python + pip plus the few Quart/proxy deps.  We install via the distro's
 # package manager rather than pip-from-source to keep the image small and
-# avoid dragging in a compiler.
+# avoid dragging in a compiler.  The base image strips perl-base, which
+# debconf (and so ca-certificates' postinst) needs.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
+        perl-base \
         python3 python3-pip python3-venv \
         ca-certificates \
  && rm -rf /var/lib/apt/lists/*
