@@ -10,7 +10,8 @@
 # The Quart app reverse-proxies /browser/ /cool/ /lool/ /hosting/ to the
 # loopback coolwsd, so the user-visible URL is a single origin.
 
-FROM collabora/code:25.04.9.4.1
+# Pinned by tag and multi-arch index digest; bump both together.
+FROM docker.io/collabora/code:25.04.9.4.1@sha256:fe49c08c27e102c1877ad4ef2ac1a7bd8ccd2dfaa6641d4533389c204a92bb88
 
 # ----------------------------------------------------------------------
 # Build-time additions: Python runtime + Quart app + blank-doc templates.
@@ -30,13 +31,13 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Isolate Quart deps in a virtualenv so they don't collide with any system
-# python the upstream image expects.
+# python the upstream image expects. Exact versions; bump deliberately.
 RUN python3 -m venv /opt/openhost-venv \
  && /opt/openhost-venv/bin/pip install --no-cache-dir \
-        "quart>=0.19,<0.21" \
-        "hypercorn>=0.17,<0.18" \
-        "httpx>=0.27,<0.29" \
-        "websockets>=13,<15"
+        "quart==0.20.0" \
+        "hypercorn==0.17.3" \
+        "httpx==0.28.1" \
+        "websockets==14.2"
 
 # Build the blank-document seeds the UI ships as "+ New …" templates.
 # This runs Collabora's bundled headless LibreOffice once at build time;
