@@ -26,11 +26,27 @@ ZONE_DOMAIN="${OPENHOST_ZONE_DOMAIN:-localhost}"
 APP_NAME="${OPENHOST_APP_NAME:-collabora}"
 SERVER_NAME="${APP_NAME}.${ZONE_DOMAIN}"
 
+# Real zones are served over https (TLS terminated in front of the router).
+# Dev zones (a dev router or the test harness) are plain http, and their zone
+# domain may carry the router's port (eg harness.localhost:59285), so match on
+# the hostname alone.  server.py builds the browser-facing URLs from this too.
+case "${ZONE_DOMAIN%%:*}" in
+    lvh.me|*.lvh.me|localhost|*.localhost)
+        PUBLIC_SCHEME=http
+        SSL_TERMINATION=false
+        ;;
+    *)
+        PUBLIC_SCHEME=https
+        SSL_TERMINATION=true
+        ;;
+esac
+export COLLABORA_PUBLIC_SCHEME="${PUBLIC_SCHEME}"
+
 # WOPI hosts permitted to proxy through the editor.  The default permits
 # our own UI (which lives on the same hostname).  Override WOPI_HOST_REGEX
 # in the OpenHost dashboard to additionally allow remote hosts.
 ZONE_DOMAIN_REGEX_ESCAPED="$(printf '%s' "${ZONE_DOMAIN}" | sed 's/\./\\./g')"
-WOPI_HOST_REGEX="${WOPI_HOST_REGEX:-https://[^/]+\\.${ZONE_DOMAIN_REGEX_ESCAPED}}"
+WOPI_HOST_REGEX="${WOPI_HOST_REGEX:-${PUBLIC_SCHEME}://[^/]+\\.${ZONE_DOMAIN_REGEX_ESCAPED}}"
 
 # coolwsd extra params:
 #   server_name     — what coolwsd publishes in /hosting/discovery URLs.
@@ -38,9 +54,10 @@ WOPI_HOST_REGEX="${WOPI_HOST_REGEX:-https://[^/]+\\.${ZONE_DOMAIN_REGEX_ESCAPED}
 #                     that's the URL the editor iframe connects back to.
 #   ssl.enable      — false; we do plain HTTP between Quart and coolwsd
 #                     (loopback) and between OpenHost router and Quart.
-#   ssl.termination — true; coolwsd builds outbound URLs as https,
-#                     reflecting what the public-facing TLS terminator
-#                     will serve.
+#   ssl.termination — true on real zones; coolwsd builds outbound URLs
+#                     (and the editor's wss:// socket) as https, reflecting
+#                     what the public-facing TLS terminator will serve.
+#                     false on plain-http dev zones.
 #   net.listen      — loopback so coolwsd can't be reached except through
 #                     Quart's proxy.  Defence in depth — the OpenHost
 #                     router only publishes 8080 anyway.
@@ -49,7 +66,7 @@ WOPI_HOST_REGEX="${WOPI_HOST_REGEX:-https://[^/]+\\.${ZONE_DOMAIN_REGEX_ESCAPED}
 export extra_params="
 --o:server_name=${SERVER_NAME}
 --o:ssl.enable=false
---o:ssl.termination=true
+--o:ssl.termination=${SSL_TERMINATION}
 --o:net.proto=IPv4
 --o:net.listen=loopback
 --o:storage.wopi.alias_groups[@mode]=groups
