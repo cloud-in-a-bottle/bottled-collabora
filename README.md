@@ -19,6 +19,7 @@ A single container running two processes:
   - `/share/v/<token>`, `/share/e/<token>`, `/share/d/<token>` — recipient-facing share routes (no Cloud in a Bottle login required; auth is the token)
   - `/wopi/files/<id>`, `/wopi/files/<id>/contents` — the WOPI host endpoints coolwsd talks to during edits
   - `/browser/`, `/cool/`, `/lool/`, `/hosting/`, `/favicon.ico`, `/robots.txt` — reverse-proxied to coolwsd (HTTP and WebSocket)
+    - except coolwsd's conversion API (`convert-to`, `extract-link-targets`, `extract-document-structure`, `transform-document-structure`, `render-search-result`, `get-thumbnail`), which the proxy refuses with 403 for everyone: coolwsd only checks that the caller is on a private network, which the proxy always is, and these paths are public. Neither the UI nor the editor uses them.
 
 Everything reaches the user through the single `8080` port that Cloud in a Bottle
 publishes.  `coolwsd` is loopback-only; the only way to reach the editor
