@@ -76,7 +76,9 @@ COOLWSD_PORT = 9980
 ZONE_DOMAIN = os.environ.get("OPENHOST_ZONE_DOMAIN", "localhost")
 APP_NAME = os.environ.get("OPENHOST_APP_NAME", "collabora")
 PUBLIC_HOST = f"{APP_NAME}.{ZONE_DOMAIN}"
-PUBLIC_BASE = f"https://{PUBLIC_HOST}"
+# "https" on real zones, "http" on dev zones; set by openhost-entrypoint.sh.
+PUBLIC_SCHEME = os.environ["COLLABORA_PUBLIC_SCHEME"]
+PUBLIC_BASE = f"{PUBLIC_SCHEME}://{PUBLIC_HOST}"
 
 # An opaque shared secret so coolwsd can prove to us it's a real WOPI
 # request when calling back.  Not a security boundary — both processes
@@ -1227,9 +1229,9 @@ async def _proxy_http(path: str) -> Response:
     }
     headers = {k: v for k, v in request.headers if k.lower() not in excluded}
     headers["X-Forwarded-For"] = request.remote_addr or ""
-    # We're talking https on the public side; tell coolwsd so it builds
-    # links accordingly.  Matches ssl.termination=true in the entrypoint.
-    headers["X-Forwarded-Proto"] = "https"
+    # Tell coolwsd the public-side scheme so it builds links accordingly.
+    # Matches ssl.termination in the entrypoint.
+    headers["X-Forwarded-Proto"] = PUBLIC_SCHEME
     headers["X-Forwarded-Host"] = PUBLIC_HOST
 
     body = await request.get_data()
@@ -1323,7 +1325,7 @@ async def _proxy_ws(path: str) -> None:
         }:
             extra_headers[key] = value
     extra_headers["X-Forwarded-For"] = websocket.remote_addr or ""
-    extra_headers["X-Forwarded-Proto"] = "https"
+    extra_headers["X-Forwarded-Proto"] = PUBLIC_SCHEME
     extra_headers["X-Forwarded-Host"] = PUBLIC_HOST
 
     await websocket.accept()
