@@ -40,7 +40,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import httpx
 import websockets
@@ -1207,7 +1207,77 @@ def _is_proxy_path(path: str) -> bool:
     return any(path.startswith(p) for p in _PROXY_PREFIXES)
 
 
+# coolwsd's conversion API (ClientRequestDispatcher::handlePostRequest in
+# 25.04): it runs LibreOffice on an uploaded file and returns the result
+# (GHSA-cf9v-hrj7-8p4v: that can run macros).  coolwsd's only check is that
+# the caller's address is loopback or private, which our proxy always is,
+# and /cool/ is a public path, so we refuse these for everyone.  Neither our
+# UI nor the editor uses them (the editor's insertfile/download/clipboard
+# endpoints are separate).
+_BLOCKED_COOLWSD_ENDPOINTS = frozenset(
+    {
+        "convert-to",
+        "extract-link-targets",
+        "extract-document-structure",
+        "transform-document-structure",
+        "render-search-result",
+        "get-thumbnail",
+    }
+)
+
+
+def _dehexify(uri: str) -> str:
+    # coolwsd rewrites the first ``cool/0x<hex>`` segment to its decoded bytes
+    # before routing (RequestDetails::dehexify), so do the same here.
+    marker = "cool/0x"
+    pos = uri.find(marker)
+    if pos == -1:
+        return uri
+    start = pos + len(marker)
+    end = uri.find("/", start)
+    encoded = uri[start:] if end == -1 else uri[start:end]
+    try:
+        decoded = bytes.fromhex(encoded).decode("latin-1")
+    except ValueError:
+        return uri
+    return uri[: start - 2] + decoded + ("" if end == -1 else uri[end:])
+
+
+def _is_blocked_coolwsd_path(raw_uri: str) -> bool:
+    """True if any spelling of ``raw_uri`` (path plus query) names a blocked endpoint.
+
+    coolwsd splits the raw URI on ``/`` and ``?``, drops empty segments and
+    routes on the segment after ``cool``/``lool``.  We check every segment of
+    the raw, dehexified and percent-decoded forms, case-insensitively, so that
+    encodings, doubled slashes, ``/convert-to/<format>`` and query strings
+    can't get around the block.
+    """
+    candidates = {raw_uri}
+    current = raw_uri
+    for _ in range(4):
+        current = unquote(current)
+        candidates.add(current)
+    for candidate in list(candidates):
+        candidates.add(_dehexify(candidate))
+        candidates.add(unquote(_dehexify(candidate)))
+    for candidate in candidates:
+        segments = re.split(r"[/?\\]", candidate.lower())
+        if any(s.strip() in _BLOCKED_COOLWSD_ENDPOINTS for s in segments):
+            return True
+    return False
+
+
+def _raw_uri(scope: dict[str, Any], path: str, query_string: bytes) -> str:
+    raw_path = scope.get("raw_path")
+    uri = raw_path.decode("latin-1") if raw_path is not None else path
+    if query_string:
+        uri += "?" + query_string.decode("latin-1")
+    return uri
+
+
 async def _proxy_http(path: str) -> Response:
+    if _is_blocked_coolwsd_path(_raw_uri(request.scope, path, request.query_string)):
+        return Response("Forbidden", status=403)
     raw_path = request.scope.get("raw_path")
     if raw_path is not None:
         forwarded_path = raw_path.decode("ascii")
@@ -1296,6 +1366,9 @@ async def ws_lool(rest: str):
 
 
 async def _proxy_ws(path: str) -> None:
+    if _is_blocked_coolwsd_path(_raw_uri(websocket.scope, path, websocket.query_string)):
+        # Not accepted yet, so this goes back as a plain HTTP 403.
+        abort(403)
     raw_path = websocket.scope.get("raw_path")
     if raw_path is not None:
         forwarded_path = raw_path.decode("ascii")
