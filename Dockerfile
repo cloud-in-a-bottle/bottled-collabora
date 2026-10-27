@@ -11,7 +11,7 @@
 # loopback coolwsd, so the user-visible URL is a single origin.
 
 # Pinned by tag and multi-arch index digest; bump both together.
-FROM docker.io/collabora/code:25.04.9.4.1@sha256:fe49c08c27e102c1877ad4ef2ac1a7bd8ccd2dfaa6641d4533389c204a92bb88
+FROM docker.io/collabora/code:26.04.5.1.1@sha256:bb8f3c9c5c9016045f25fccb5f0649be94469ebc7c7cc379f3576e470cccf33d
 
 # ----------------------------------------------------------------------
 # Build-time additions: Python runtime + Quart app + blank-doc templates.
