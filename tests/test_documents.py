@@ -82,6 +82,13 @@ def test_new_document_opens_in_editor(stack: OpenhostStack, page: Page) -> None:
     while time.monotonic() < deadline:
         logs = stack.app_logs()
         if wopi_fetch.search(logs):
+            # CODE 26.04's editor connects on the "compact" URL (/cool/ws?WOPISrc=...) and only falls back to the
+            # legacy one (/cool/<WOPISrc>/ws) if that fails, so check the compact one went through our proxy.
+            # hypercorn's access log leaves out the query string.
+            assert re.search(r'"GET /cool/ws(\?\S*)? [^"]*" 101', logs), (
+                "the editor's websocket didn't connect on the compact URL /cool/ws. Proxied /cool/ requests:\n"
+                + "\n".join(line for line in logs.splitlines() if '"GET /cool/' in line)[-3000:]
+            )
             return
         time.sleep(3)
     frame = page.frame(name="cool-iframe")
