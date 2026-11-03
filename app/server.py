@@ -19,8 +19,9 @@ Why one process:
     and matches the patterns OpenHost's own router uses.
 
 Persistent state lives under OPENHOST_APP_DATA_DIR:
-    files/<uuid>     — raw document bytes
-    index.db         — sqlite metadata (filename, size, mtime, ext)
+    files/<name>     — raw document bytes, under their real filenames
+                       (see storage.py)
+    index.db         — sqlite metadata (filename, on-disk name, size, mtime, ext)
 
 The whole thing intentionally avoids folders, sharing, multi-user, sorting,
 search.  This is "barebones": list, upload, open, save, delete, new-doc.
@@ -56,6 +57,8 @@ from quart import (
     websocket,
 )
 from werkzeug.datastructures import Headers
+
+import storage
 
 # ---------------------------------------------------------------------------
 # Config
@@ -167,12 +170,25 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_shares_file_id ON shares (file_id)"
         )
+        # Where the document's bytes are, as a name inside files/ (see
+        # storage.py).  NULL for documents from before that layout, until
+        # storage.migrate moves them.
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(files)")}
+        if "disk_name" not in columns:
+            conn.execute("ALTER TABLE files ADD COLUMN disk_name TEXT")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_files_disk_name ON files (disk_name)"
+        )
+    with _connect() as conn:
+        moved = storage.migrate(conn, FILES_DIR)
+    if moved:
+        print(f"[collabora] moved {moved} document(s) to their real filenames", flush=True)
 
 
 def list_files() -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, size, ext, mtime FROM files ORDER BY mtime DESC"
+            "SELECT id, name, size, ext, mtime, disk_name FROM files ORDER BY mtime DESC"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -180,17 +196,19 @@ def list_files() -> list[dict[str, Any]]:
 def get_file_row(file_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, name, size, ext, mtime FROM files WHERE id = ?",
+            "SELECT id, name, size, ext, mtime, disk_name FROM files WHERE id = ?",
             (file_id,),
         ).fetchone()
     return dict(row) if row else None
 
 
-def insert_file(file_id: str, name: str, size: int, ext: str, mtime: float) -> None:
+def insert_file(file_id: str, name: str, staged: Path, size: int, mtime: float) -> None:
+    """Index a new document whose bytes are fully written to ``staged``, moving them into files/."""
     with _connect() as conn:
+        disk_name = storage.store_new(conn, FILES_DIR, staged, name, file_id)
         conn.execute(
-            "INSERT INTO files (id, name, size, ext, mtime) VALUES (?, ?, ?, ?, ?)",
-            (file_id, name, size, ext, mtime),
+            "INSERT INTO files (id, name, size, ext, mtime, disk_name) VALUES (?, ?, ?, ?, ?, ?)",
+            (file_id, name, size, _ext_of(name), mtime, disk_name),
         )
 
 
@@ -202,12 +220,10 @@ def update_file_size(file_id: str, size: int, mtime: float) -> None:
         )
 
 
-def rename_file_row(file_id: str, name: str, mtime: float) -> None:
+def rename_file(row: dict[str, Any], name: str, mtime: float) -> None:
+    """Rename a document, moving its file on disk to the new name too."""
     with _connect() as conn:
-        conn.execute(
-            "UPDATE files SET name = ?, mtime = ? WHERE id = ?",
-            (name, mtime, file_id),
-        )
+        storage.rename(conn, FILES_DIR, row, name, mtime)
 
 
 def delete_file_row(file_id: str) -> None:
@@ -342,9 +358,9 @@ def _wopi_src(file_id: str) -> str:
     return f"http://127.0.0.1:8080/wopi/files/{file_id}"
 
 
-def _file_path(file_id: str) -> Path:
-    # ``file_id`` is generated server-side as a UUID; never trust user input.
-    return FILES_DIR / file_id
+def _file_path(row: dict[str, Any]) -> Path:
+    # Built from the index row only, never from request input.
+    return storage.path_of(FILES_DIR, row)
 
 
 def _format_size(n: int) -> str:
@@ -402,13 +418,11 @@ async def upload():
         abort(400, description="no file in request")
 
     name = _validated_name(uploaded.filename)
-    ext = _ext_of(name)
     file_id = uuid.uuid4().hex
-    dest = _file_path(file_id)
 
     # Stream to disk in chunks to avoid loading the whole document into RAM.
     size = 0
-    with dest.open("wb") as out:
+    with storage.new_staging_file(FILES_DIR) as out:
         while True:
             chunk = uploaded.stream.read(64 * 1024)
             if not chunk:
@@ -416,7 +430,7 @@ async def upload():
             out.write(chunk)
             size += len(chunk)
 
-    insert_file(file_id, name, size, ext, time.time())
+    insert_file(file_id, name, Path(out.name), size, time.time())
     return redirect(url_for("index_page"))
 
 
@@ -430,11 +444,10 @@ async def new_doc(kind: str):
         # Should be impossible: templates are baked into the image.
         abort(500, description=f"missing seed template {template_path}")
     file_id = uuid.uuid4().hex
-    dest = _file_path(file_id)
-    shutil.copyfile(template_path, dest)
-    size = dest.stat().st_size
-    ext = _ext_of(template_name)
-    insert_file(file_id, template_name, size, ext, time.time())
+    with storage.new_staging_file(FILES_DIR) as out, template_path.open("rb") as seed_file:
+        shutil.copyfileobj(seed_file, out)
+    staged = Path(out.name)
+    insert_file(file_id, template_name, staged, staged.stat().st_size, time.time())
     return redirect(url_for("editor_page", file_id=file_id))
 
 
@@ -445,12 +458,10 @@ async def delete(file_id: str):
     row = get_file_row(file_id)
     if row is None:
         abort(404)
-    dest = _file_path(file_id)
-    try:
-        dest.unlink()
-    except FileNotFoundError:
-        pass
+    # Index first: a crash in between leaves an unindexed file, not an index
+    # row without one.
     delete_file_row(file_id)
+    _file_path(row).unlink(missing_ok=True)
     return redirect(url_for("index_page"))
 
 
@@ -464,7 +475,7 @@ async def download(file_id: str):
     # Read the whole file into memory.  Documents in this app are bounded
     # to a few MB in practice; if/when that becomes false, swap to
     # response.send() with an iterator.
-    body = _file_path(file_id).read_bytes()
+    body = _file_path(row).read_bytes()
     mime = mimetypes.guess_type(row["name"])[0] or "application/octet-stream"
     # RFC 5987-style Content-Disposition handles UTF-8 filenames;
     # ASCII-only fallback covers older browsers.
@@ -685,7 +696,7 @@ async def wopi_get_file(file_id: str):
     row = get_file_row(file_id)
     if row is None:
         abort(404)
-    body = _file_path(file_id).read_bytes()
+    body = _file_path(row).read_bytes()
     return Response(
         body,
         status=200,
@@ -719,15 +730,9 @@ async def wopi_put_file(file_id: str):
     if current_lock is None and row["size"] > 0:
         return _lock_conflict(file_id)
     body = await request.get_data()
-    dest = _file_path(file_id)
-    # Atomic replace: write to a sibling tempfile, fsync, rename.  Otherwise
+    # Atomic replace: write to a staged tempfile, fsync, rename.  Otherwise
     # a kill mid-write would corrupt the document the user is editing.
-    tmp = dest.with_suffix(dest.suffix + ".tmp")
-    with tmp.open("wb") as out:
-        out.write(body)
-        out.flush()
-        os.fsync(out.fileno())
-    tmp.replace(dest)
+    storage.replace_contents(_file_path(row), body)
     update_file_size(file_id, len(body), time.time())
     # WOPI spec: 200 with empty body on PutFile success.  coolwsd accepts
     # JSON or empty; empty is canonical.
@@ -777,7 +782,7 @@ async def wopi_files_op(file_id: str):
     if override == "DELETE":
         if not is_owner:
             abort(403, description="only the owner can delete this document")
-        return _wopi_delete(file_id)
+        return _wopi_delete(file_id, row)
     if override == "PUT_RELATIVE":
         if not is_owner:
             # Save-As from a share link would create an owner-owned file from
@@ -866,24 +871,20 @@ def _wopi_rename(file_id: str, row: dict[str, Any]) -> Response:
     new_name = f"{requested}.{ext}" if ext else requested
     new_name = _validated_name(new_name)  # aborts 400 on a bad name
 
-    rename_file_row(file_id, new_name, time.time())
+    rename_file(row, new_name, time.time())
     # The editor uses ``Name`` as the new BaseFileName, so it includes the
     # extension (as CheckFileInfo's does).  ``Url`` is the document's WOPISrc,
     # unchanged; coolwsd strips any access_token and the editor keeps it.
     return jsonify({"Name": new_name, "Url": _wopi_src(file_id)})
 
 
-def _wopi_delete(file_id: str) -> Response:
+def _wopi_delete(file_id: str, row: dict[str, Any]) -> Response:
     current = _locks.get(file_id)
     provided = _lock_header()
     if current is not None and provided and provided != current:
         return _lock_conflict(file_id)
-    dest = _file_path(file_id)
-    try:
-        dest.unlink()
-    except FileNotFoundError:
-        pass
     delete_file_row(file_id)
+    _file_path(row).unlink(missing_ok=True)
     _locks.pop(file_id, None)
     return Response(status=200)
 
@@ -951,15 +952,11 @@ async def _wopi_put_relative(row: dict[str, Any]) -> Response:
 
     body = await request.get_data()
     new_id = uuid.uuid4().hex
-    dest = _file_path(new_id)
-    # Atomic write, same as PutFile.
-    tmp = dest.with_suffix(dest.suffix + ".tmp")
-    with tmp.open("wb") as out:
+    with storage.new_staging_file(FILES_DIR) as out:
         out.write(body)
         out.flush()
         os.fsync(out.fileno())
-    tmp.replace(dest)
-    insert_file(new_id, name, len(body), _ext_of(name), time.time())
+    insert_file(new_id, name, Path(out.name), len(body), time.time())
 
     # The Url must carry an access_token the editor can immediately reuse for
     # the new file; for the owner that's the in-process owner WOPI token.
@@ -1019,7 +1016,7 @@ async def share_download(token: str):
     row = get_file_row(share["file_id"])
     if row is None:
         abort(404)
-    body = _file_path(row["id"]).read_bytes()
+    body = _file_path(row).read_bytes()
     mime = mimetypes.guess_type(row["name"])[0] or "application/octet-stream"
     safe_name = row["name"].encode("ascii", errors="replace").decode("ascii")
     return Response(

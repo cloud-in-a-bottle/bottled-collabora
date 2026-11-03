@@ -64,9 +64,12 @@ from outside the container is through the Quart proxy.
 Lives under `OPENHOST_APP_DATA_DIR`:
 
 ```
-files/<uuid>     — raw document bytes, one per file
-index.db         — sqlite metadata (filename, size, ext, mtime)
+files/<name>     — raw document bytes, one per file, under its real filename
+files/.staging/  — partly written uploads and saves (emptied at startup)
+index.db         — sqlite metadata (filename, on-disk name, size, ext, mtime)
 ```
+
+Documents are stored under their names (eg `files/Budget 2026.ods`) so the data dir can be browsed and backed up as-is. The on-disk name is the document's name with `/`, `\`, control characters and leading dots removed and the length capped, plus a ` (2)` suffix when two documents would share one. Everywhere else (URLs, WOPI, share links, the index) a document is known by a uuid; the index maps it to its on-disk name, and paths are never built from request input. Renaming a document renames its file. Documents stored as `files/<uuid>` by earlier versions are moved to their names at startup; see `app/storage.py`.
 
 The blank-document templates baked into the image (under
 `/opt/collabora-blank-templates/`) are read-only and not user data; they
