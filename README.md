@@ -20,6 +20,7 @@ A single container running two processes:
   - `/wopi/files/<id>`, `/wopi/files/<id>/contents` — the WOPI host endpoints coolwsd talks to during edits
   - `/browser/`, `/cool/`, `/lool/`, `/hosting/`, `/favicon.ico`, `/robots.txt` — reverse-proxied to coolwsd (HTTP and WebSocket)
     - except coolwsd's conversion API (`convert-to`, `extract-link-targets`, `extract-document-structure`, `transform-document-structure`, `render-search-result`, `get-thumbnail`), which the proxy refuses with 403 for everyone: coolwsd only checks that the caller is on a private network, which the proxy always is, and these paths are public. Neither the UI nor the editor uses them.
+    - and coolwsd's admin console (`/browser/<hash>/admin/…`, `admin-bundle.js`, `adminIntegratorSettings.html` and its settings endpoints, `/cool/adminws`, `/cool/getMetrics`), also refused with 403 for everyone: no admin username is configured, so nobody can log in, but nothing of ours uses it.
 
 Everything reaches the user through the single `8080` port that Cloud in a Bottle
 publishes.  `coolwsd` is loopback-only; the only way to reach the editor

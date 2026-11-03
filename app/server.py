@@ -1239,6 +1239,30 @@ _BLOCKED_COOLWSD_ENDPOINTS = frozenset(
         "transform-document-structure",
         "render-search-result",
         "get-thumbnail",
+        # The admin console's websocket and metrics endpoint (/cool/adminws,
+        # /cool/getMetrics).  No admin username is configured, so nobody can
+        # log in, but nothing of ours uses them, so don't expose them at all.
+        "adminws",
+        "getmetrics",
+    }
+)
+
+# The admin console's pages and assets, served by coolwsd's file server under
+# /browser/<hash>/: admin/*.html and their css/fonts/images, admin-bundle.js,
+# adminIntegratorSettings.html (the editor only opens it when CheckFileInfo
+# advertises a settings URL, which ours doesn't), and the settings endpoints
+# that page talks to.  Only matched on /browser/ paths, so an unrelated
+# "admin" segment elsewhere can't break the editor.
+_BLOCKED_BROWSER_SEGMENTS = frozenset(
+    {
+        "admin",
+        "admin-bundle.js",
+        "admin-templates",
+        "adminintegratorsettings.html",
+        "upload-settings",
+        "fetch-settings-config",
+        "delete-settings-config",
+        "fetch-settings-file",
     }
 )
 
@@ -1278,8 +1302,10 @@ def _is_blocked_coolwsd_path(raw_uri: str) -> bool:
         candidates.add(_dehexify(candidate))
         candidates.add(unquote(_dehexify(candidate)))
     for candidate in candidates:
-        segments = re.split(r"[/?\\]", candidate.lower())
-        if any(s.strip() in _BLOCKED_COOLWSD_ENDPOINTS for s in segments):
+        segments = [s.strip() for s in re.split(r"[/?\\]", candidate.lower()) if s.strip()]
+        if any(s in _BLOCKED_COOLWSD_ENDPOINTS for s in segments):
+            return True
+        if segments[:1] == ["browser"] and any(s in _BLOCKED_BROWSER_SEGMENTS for s in segments):
             return True
     return False
 
