@@ -76,18 +76,17 @@ get copied into `files/` as new documents are created.
 
 Two things to know:
 
-1. **Process isolation is weaker than upstream.**  The standard Collabora
-   deployment uses a `CAP_SYS_ADMIN` mount jail plus a custom seccomp
-   profile to isolate document-rendering child processes.  Rootless
-   Cloud in a Bottle provides neither, so this image disables both:
-   `--o:security.capabilities=false`, `--o:security.seccomp=false`.
-   Process isolation falls back to the Cloud in a Bottle user namespace plus
-   `no_new_privileges=true`.  This is **weaker** than upstream's default:
-   a LibreOffice document-rendering bug that escapes the per-document
-   forkit could read other documents the same container has loaded.  Do
-   not pair this app with documents from mutually-distrusting authors.
-   For a single-user / single-tenant zone (you and your own files), this
-   is the same threat model as running LibreOffice locally.
+1. **Process isolation is upstream's default.**  coolwsd runs with
+   upstream's security settings (`security.capabilities` and
+   `security.seccomp` left on) and picks the strongest isolation for its
+   document-rendering processes it can get without privileges: a mount
+   namespace jail where unprivileged user namespaces are available, else
+   landlock; it refuses to start if it gets none.  Its startup log says
+   which (`Using Mount Namespaces: true`).  Even so, treat a LibreOffice
+   rendering bug as able to reach other documents this container has
+   loaded: do not pair this app with documents from mutually-distrusting
+   authors.  For a single-user / single-tenant zone (you and your own
+   files), this is the same threat model as running LibreOffice locally.
 
 2. **Authentication has two layers: Cloud in a Bottle cookie + share tokens.**
    - **Owner routes** (`/`, `/upload`, `/new`, `/open`, `/manage`, ...)
@@ -139,7 +138,7 @@ spreadsheets.
 
 | Env var            | Default                         | Purpose                                                   |
 |--------------------|---------------------------------|-----------------------------------------------------------|
-| `WOPI_HOST_REGEX`  | `https://[^/]+\.{zone-domain}`  | Hosts coolwsd will accept WOPI document-load calls from.  |
+| `WOPI_HOST_REGEX`  | `https://.+\.{zone-domain}`     | Hosts coolwsd will accept WOPI document-load calls from (besides its own loopback WOPI host). coolwsd parses it as a URI and matches its host and port as a regex, so it can't contain `[`. |
 
 `OPENHOST_APP_NAME` and `OPENHOST_ZONE_DOMAIN` are read automatically.
 
@@ -147,9 +146,9 @@ spreadsheets.
 
 ```
 .
-├── Dockerfile                         # collabora/code base + python venv + UI
+├── Dockerfile                         # collabora/code base + standalone python, venv, UI
 ├── openhost.toml                      # OpenHost manifest (port 8080)
-├── openhost-entrypoint.sh             # supervises coolwsd + hypercorn
+├── openhost-entrypoint.py             # derives coolwsd's config, supervises coolwsd + hypercorn
 ├── scripts/
 │   └── generate-blank-templates.sh    # build-time: creates blank.{odt,ods,odp}
 └── app/

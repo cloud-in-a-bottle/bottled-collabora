@@ -76,7 +76,7 @@ COOLWSD_PORT = 9980
 ZONE_DOMAIN = os.environ.get("OPENHOST_ZONE_DOMAIN", "localhost")
 APP_NAME = os.environ.get("OPENHOST_APP_NAME", "collabora")
 PUBLIC_HOST = f"{APP_NAME}.{ZONE_DOMAIN}"
-# "https" on real zones, "http" on dev zones; set by openhost-entrypoint.sh.
+# "https" on real zones, "http" on dev zones; set by openhost-entrypoint.py.
 PUBLIC_SCHEME = os.environ["COLLABORA_PUBLIC_SCHEME"]
 PUBLIC_BASE = f"{PUBLIC_SCHEME}://{PUBLIC_HOST}"
 
@@ -1354,6 +1354,8 @@ async def robots():
 # ---- WebSocket proxy -------------------------------------------------------
 
 
+# CODE 26.04's editor connects on the "compact" URL ``/cool/ws?WOPISrc=...``
+# and falls back to the legacy ``/cool/<encoded WOPISrc>/ws``; both land here.
 @app.websocket("/cool/<path:rest>")
 async def ws_cool(rest: str):
     await _proxy_ws(f"/cool/{rest}")
