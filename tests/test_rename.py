@@ -116,15 +116,12 @@ def test_rename_from_the_editor_header(stack: OpenhostStack, page: Page) -> None
     history = "\n".join(f"  {t:5.1f}s  header={v!r}  BaseFileName={b!r}" for t, v, b in seen)
     details = f"\nafter Enter:\n{history}\n\nWOPI log:\n{_wopi_logs(stack)}"
 
-    renamed = [(t, v) for t, v, b in seen if b == "Renamed doc.odt"]
+    renamed = [t for t, _, b in seen if b == "Renamed doc.odt"]
     assert renamed, f"the editor never took the new name{details}"
-    first, header_then = renamed[0]
-    # coolwsd reloads the document a few seconds after a rename, and the reload refreshes the header from
-    # CheckFileInfo. The editor should take the new name from the rename itself, before that reload, while the header
-    # still shows what was typed.
-    assert header_then == "Renamed doc", (
-        f"the editor only took the new name when it reloaded, not from the rename{details}"
-    )
+    first = renamed[0]
+    # coolwsd forces a reload after a rename, which refreshes the name from CheckFileInfo, but the editor waits 3s
+    # before reconnecting. The editor should take the new name from the rename itself, before that.
+    assert first < 3, f"the editor only took the new name when it reloaded, not from the rename{details}"
     assert not any(t >= first and (v == old_name or b == old_name) for t, v, b in seen), (
         f"the header went back to the old name {old_name!r} after the rename{details}"
     )
