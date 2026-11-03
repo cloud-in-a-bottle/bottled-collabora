@@ -336,6 +336,12 @@ def _ext_of(name: str) -> str:
     return ext.lower() if dot else ""
 
 
+def _wopi_src(file_id: str) -> str:
+    # The WOPISrc coolwsd uses for a document: our WOPI endpoint on loopback
+    # (see editor_page for why loopback).
+    return f"http://127.0.0.1:8080/wopi/files/{file_id}"
+
+
 def _file_path(file_id: str) -> Path:
     # ``file_id`` is generated server-side as a UUID; never trust user input.
     return FILES_DIR / file_id
@@ -503,7 +509,7 @@ async def editor_page(file_id: str):
     # outbound DNS/firewall surprises.
     # WOPISrc must be percent-encoded in the cool.html query string; coolwsd
     # rejects (older builds) or warns on (current) an unencoded value.
-    wopi_src = f"http://127.0.0.1:8080/wopi/files/{file_id}"
+    wopi_src = _wopi_src(file_id)
     cool_url = (
         f"{PUBLIC_BASE}/browser/dist/cool.html"
         f"?WOPISrc={quote(wopi_src, safe='')}"
@@ -828,18 +834,28 @@ def _wopi_refresh_lock(file_id: str) -> Response:
 def _wopi_rename(file_id: str, row: dict[str, Any]) -> Response:
     """RENAME_FILE: change the stored filename, preserving the extension.
 
-    coolwsd sends the new *base* name (no extension) in X-WOPI-RequestedName.
-    The spec nominally UTF-7-encodes it, but Collabora sends UTF-8/ASCII in
-    practice and our filename allowlist rejects anything exotic, so we treat
-    it as text.  We re-append the file's current extension so a rename can
-    never change the document type.
+    coolwsd sends the new *base* name (no extension) in X-WOPI-RequestedName,
+    UTF-7 encoded as the spec says (so "Café" arrives as "Caf+AOk-").  We
+    re-append the file's current extension so a rename can never change the
+    document type.
+
+    The response must carry both ``Name`` and ``Url``: the editor applies a
+    rename (its idea of the file name, the header, the window title) only
+    when ``Url`` is non-empty; otherwise it waits for the reload coolwsd
+    forces after a rename, and until then the header falls back to the old
+    name whenever the name field is reset.
     """
     current = _locks.get(file_id)
     provided = _lock_header()
     if current is not None and provided and provided != current:
         return _lock_conflict(file_id)
 
-    requested = request.headers.get("X-WOPI-RequestedName", "").strip()
+    requested = request.headers.get("X-WOPI-RequestedName", "")
+    try:
+        # Header values reach us as latin-1 decoded str.
+        requested = requested.encode("latin-1").decode("utf-7").strip()
+    except UnicodeError:
+        abort(400, description="X-WOPI-RequestedName is not valid UTF-7")
     if not requested:
         abort(400, description="missing X-WOPI-RequestedName")
     ext = row["ext"]
@@ -851,9 +867,10 @@ def _wopi_rename(file_id: str, row: dict[str, Any]) -> Response:
     new_name = _validated_name(new_name)  # aborts 400 on a bad name
 
     rename_file_row(file_id, new_name, time.time())
-    # Response body per spec: the new base name without extension.
-    base = new_name[: -(len(ext) + 1)] if ext else new_name
-    return jsonify({"Name": base})
+    # The editor uses ``Name`` as the new BaseFileName, so it includes the
+    # extension (as CheckFileInfo's does).  ``Url`` is the document's WOPISrc,
+    # unchanged; coolwsd strips any access_token and the editor keeps it.
+    return jsonify({"Name": new_name, "Url": _wopi_src(file_id)})
 
 
 def _wopi_delete(file_id: str) -> Response:
@@ -1042,7 +1059,7 @@ async def _render_share_editor(share: dict[str, Any], *, can_write: bool):
     # /open/<id> route).  The access_token IS the share token — the WOPI
     # handler validates it against the shares table and applies the
     # mode-scoped permissions.
-    wopi_src = f"http://127.0.0.1:8080/wopi/files/{row['id']}"
+    wopi_src = _wopi_src(row["id"])
     cool_url = (
         f"{PUBLIC_BASE}/browser/dist/cool.html"
         f"?WOPISrc={quote(wopi_src, safe='')}"
