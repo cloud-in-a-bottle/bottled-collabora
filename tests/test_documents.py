@@ -3,7 +3,9 @@ import time
 
 import requests
 from openhost_test_harness import OpenhostStack
+from playwright.sync_api import Locator
 from playwright.sync_api import Page
+from playwright.sync_api import expect
 
 CONTENT = b"hello from the upstream-coverage test\n"
 
@@ -64,13 +66,17 @@ def test_download_share_link_works_anonymously(stack: OpenhostStack) -> None:
     assert requests.get(share_url, timeout=30).status_code == 404, "revoked share link still works"
 
 
-def test_new_document_opens_in_editor(stack: OpenhostStack, page: Page) -> None:
+def _new_document(stack: OpenhostStack) -> str:
     _wait_for_ui(stack)
     created = stack.owner_session.post(f"{stack.url}/new/writer", allow_redirects=False, timeout=30)
     assert created.status_code in (301, 302, 303), f"new document: {created.status_code}: {created.text[:300]}"
     match = re.search(r"/open/([0-9a-f]{32})", created.headers["Location"])
     assert match, f"unexpected redirect {created.headers['Location']}"
-    file_id = match.group(1)
+    return match.group(1)
+
+
+def test_new_document_opens_in_editor(stack: OpenhostStack, page: Page) -> None:
+    file_id = _new_document(stack)
 
     stack.playwright_login(page)
     page.goto(f"{stack.url}/open/{file_id}")
@@ -96,3 +102,48 @@ def test_new_document_opens_in_editor(stack: OpenhostStack, page: Page) -> None:
     raise AssertionError(
         f"coolwsd never fetched the document from the WOPI host.\n\neditor frame:\n{frame_text}\n\nlogs:\n{logs[-5000:]}"
     )
+
+
+# Upstream, the logo at the top left of the editor links to collaboraonline.com. For the owner it goes back to the app's
+# file list instead; share-link recipients would only be bounced to the zone login there, so for them it does nothing.
+
+
+def _editor_logo(stack: OpenhostStack, page: Page) -> Locator:
+    logo = page.frame_locator("#cool-iframe").locator("#document-header > a")
+    try:
+        logo.wait_for(state="visible", timeout=120_000)
+    except Exception as e:
+        raise AssertionError(f"the editor logo never appeared: {e}{_logs(stack)}") from e
+    return logo
+
+
+def test_editor_logo_goes_to_the_app(stack: OpenhostStack, page: Page) -> None:
+    file_id = _new_document(stack)
+    stack.playwright_login(page)
+    page.goto(f"{stack.url}/open/{file_id}")
+    logo = _editor_logo(stack, page)
+    home = f"{stack.url}/"
+    expect(logo).to_have_attribute("href", home, timeout=30_000)
+    # A first-run welcome dialog covers the editor, so dispatch the click rather than clicking through it.
+    logo.dispatch_event("click")
+    page.wait_for_url(home, timeout=30_000)
+    assert len(page.context.pages) == 1, f"the logo opened another tab: {[p.url for p in page.context.pages]}"
+
+
+def test_editor_logo_does_nothing_for_share_recipients(stack: OpenhostStack, page: Page) -> None:
+    file_id = _new_document(stack)
+    manage = stack.owner_session.post(f"{stack.url}/manage/{file_id}/create", data={"mode": "edit"}, timeout=30)
+    assert manage.status_code == 200, f"create share: {manage.status_code}: {manage.text[:500]}"
+    urls = re.findall(r'value="([^"]*/share/e/[A-Za-z0-9_-]{32})"', manage.text)
+    assert len(urls) == 1, f"expected one edit share URL on the manage page: {manage.text[:2000]}"
+    share_url = urls[0]
+
+    page.goto(share_url)
+    logo = _editor_logo(stack, page)
+    # The editor sets the logo's link a little after it appears.
+    page.wait_for_timeout(2_000)
+    assert logo.get_attribute("href") is None, f"share recipient's editor logo links to {logo.get_attribute('href')!r}"
+    logo.dispatch_event("click")
+    page.wait_for_timeout(2_000)
+    assert page.url == share_url, f"the logo navigated a share recipient to {page.url}"
+    assert len(page.context.pages) == 1, f"the logo opened another tab: {[p.url for p in page.context.pages]}"

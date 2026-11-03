@@ -521,6 +521,7 @@ async def editor_page(file_id: str):
         cool_url=cool_url,
         access_token=WOPI_ACCESS_TOKEN,
         permission="edit",
+        home_url=f"{PUBLIC_BASE}/",
     )
 
 
@@ -1072,6 +1073,9 @@ async def _render_share_editor(share: dict[str, Any], *, can_write: bool):
         cool_url=cool_url,
         access_token=share["token"],
         permission=("edit" if can_write else "readonly"),
+        # The app's file list would only bounce a share recipient to the zone
+        # login, so their editor logo leads nowhere.
+        home_url=None,
     )
 
 
