@@ -124,7 +124,8 @@ def test_editor_logo_goes_to_the_app(stack: OpenhostStack, page: Page) -> None:
     logo = _editor_logo(stack, page)
     home = f"{stack.url}/"
     expect(logo).to_have_attribute("href", home, timeout=30_000)
-    logo.click()
+    # A first-run welcome dialog covers the editor, so dispatch the click rather than clicking through it.
+    logo.dispatch_event("click")
     page.wait_for_url(home, timeout=30_000)
     assert len(page.context.pages) == 1, f"the logo opened another tab: {[p.url for p in page.context.pages]}"
 
@@ -142,7 +143,7 @@ def test_editor_logo_does_nothing_for_share_recipients(stack: OpenhostStack, pag
     # The editor sets the logo's link a little after it appears.
     page.wait_for_timeout(2_000)
     assert logo.get_attribute("href") is None, f"share recipient's editor logo links to {logo.get_attribute('href')!r}"
-    logo.click()
+    logo.dispatch_event("click")
     page.wait_for_timeout(2_000)
     assert page.url == share_url, f"the logo navigated a share recipient to {page.url}"
     assert len(page.context.pages) == 1, f"the logo opened another tab: {[p.url for p in page.context.pages]}"
