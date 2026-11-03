@@ -105,6 +105,7 @@ def test_store_rename_and_paths(tmp_path: Path) -> None:
         disk_name = storage.store_new(conn, files, Path(out.name), "Notes.odt", file_id)
         conn.execute("INSERT INTO files (id, name, disk_name) VALUES (?, ?, ?)", (file_id, "Notes.odt", disk_name))
     assert _disk_names(conn) == {"a" * 32: "Notes.odt", "b" * 32: "Notes (2).odt"}
+    assert (files / "Notes.odt").stat().st_mode & 0o777 == 0o644
 
     row = {"id": "b" * 32, "disk_name": "Notes (2).odt"}
     assert storage.rename(conn, files, row, "Draft.odt", 0.0) == "Draft.odt"

@@ -83,7 +83,11 @@ def new_staging_file(files_dir: Path) -> IO[bytes]:
     """An open temp file in ``files/.staging/``, on the same filesystem as the documents."""
     staging = files_dir / STAGING_DIR
     staging.mkdir(parents=True, exist_ok=True)
-    return tempfile.NamedTemporaryFile(dir=staging, delete=False)
+    out = tempfile.NamedTemporaryFile(dir=staging, delete=False)
+    # tempfile creates 0600; documents are readable like any other file
+    # written here (and by whatever backs up the data dir).
+    os.fchmod(out.fileno(), 0o644)
+    return out
 
 
 def link_into_place(
