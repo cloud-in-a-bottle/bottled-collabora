@@ -50,6 +50,8 @@ def _wopi_logs(stack: OpenhostStack) -> str:
 def test_wopi_rename(stack: OpenhostStack) -> None:
     file_id = _new_document(stack)
     token = _owner_wopi_token(stack, file_id)
+    files = stack.data_dir / "files"
+    before = {p.name for p in files.iterdir()}
     # What coolwsd sends: the new name without its extension, UTF-7 encoded ("Café notes").
     response = requests.post(
         f"{stack.url}/wopi/files/{file_id}?access_token={token}",
@@ -65,6 +67,10 @@ def test_wopi_rename(stack: OpenhostStack) -> None:
     info = requests.get(f"{stack.url}/wopi/files/{file_id}?access_token={token}", timeout=30).json()
     assert info["BaseFileName"] == "Café notes.odt", f"CheckFileInfo after rename: {info}"
     assert "Café notes.odt" in _file_names(stack)
+    # The file on disk moved to the new name.
+    after = {p.name for p in files.iterdir()}
+    assert after - before == {"Café notes.odt"} and len(before - after) == 1, f"files/ before: {before}, after: {after}"
+    assert next(iter(before - after)).startswith("New Document"), f"files/ before: {before}, after: {after}"
 
 
 def test_share_recipients_cannot_rename(stack: OpenhostStack) -> None:

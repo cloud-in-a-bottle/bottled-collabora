@@ -37,7 +37,12 @@ def test_upload_download_and_storage(stack: OpenhostStack) -> None:
     file_id = _upload(stack, "stored.txt")
     response = stack.owner_session.get(f"{stack.url}/download/{file_id}", timeout=30)
     assert response.status_code == 200 and response.content == CONTENT, f"download: {response.status_code}"
-    assert (stack.data_dir / "files" / file_id).read_bytes() == CONTENT, "upload not stored under app_data/files"
+    # Stored under its real name, not its id.
+    stored = stack.data_dir / "files" / "stored.txt"
+    assert stored.is_file() and stored.read_bytes() == CONTENT, (
+        f"upload not stored as app_data/files/stored.txt: {sorted(p.name for p in (stack.data_dir / 'files').iterdir())}"
+    )
+    assert not (stack.data_dir / "files" / file_id).exists()
     assert (stack.data_dir / "index.db").is_file()
     # The owner routes stay behind the router login.
     anonymous = requests.get(f"{stack.url}/download/{file_id}", allow_redirects=False, timeout=30)
