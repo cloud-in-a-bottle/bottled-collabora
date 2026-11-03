@@ -16,7 +16,6 @@ ADMIN_PATHS = (
     "/browser/dist/adminIntegratorSettings.html",
     "/browser/dist/fetch-settings-config",
     "/cool/getMetrics",
-    "/lool/getMetrics",
 )
 
 
