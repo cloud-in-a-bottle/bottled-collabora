@@ -27,6 +27,48 @@
   </form>
   <iframe id="cool-iframe" name="cool-iframe" allow="clipboard-read; clipboard-write" allowfullscreen></iframe>
   <script>
+    // CODE's branding.js points the logo at the top left of the editor at
+    // collaboraonline.com and opens that in a new tab on click; there's no
+    // setting or WOPI field that changes it.  The editor is on our origin, so
+    // repoint it from here: to the app's file list for the owner, and to
+    // nothing for share recipients (homeUrl is null).
+    const homeUrl = {{ home_url|tojson }};
+    const frame = document.getElementById("cool-iframe");
+
+    function fixLogo(doc) {
+      const logo = doc.querySelector("#document-header > a");
+      if (!logo) return;
+      if (homeUrl === null) {
+        if (logo.hasAttribute("href")) logo.removeAttribute("href");
+      } else {
+        if (logo.getAttribute("href") !== homeUrl) logo.setAttribute("href", homeUrl);
+        if (logo.getAttribute("target") !== "_top") logo.setAttribute("target", "_top");
+      }
+    }
+
+    frame.addEventListener("load", () => {
+      const doc = frame.contentDocument;
+      if (!doc) return;
+      fixLogo(doc);
+      // The editor creates the logo once the document loads (and again when
+      // the toolbar mode changes), and branding.js sets its href after that.
+      new MutationObserver(() => fixLogo(doc)).observe(doc, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["href", "target"],
+      });
+      // Runs before branding.js's own click handler (which calls window.open)
+      // and stops it; modified clicks fall through to our href.
+      doc.addEventListener("click", (event) => {
+        if (!event.target.closest || !event.target.closest("#document-header > a")) return;
+        event.stopPropagation();
+        if (homeUrl !== null && (event.ctrlKey || event.metaKey || event.shiftKey)) return;
+        event.preventDefault();
+        if (homeUrl !== null) window.top.location.href = homeUrl;
+      }, true);
+    });
+
     document.getElementById("cool-form").submit();
   </script>
 </body>
