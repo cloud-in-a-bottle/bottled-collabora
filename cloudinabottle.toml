@@ -1,10 +1,13 @@
 [app]
 name = "collabora"
-version = "0.3.0"
+version = "1.0.0"
 description = "Online office suite (Writer, Calc, Impress) with a built-in file manager — upload, edit, and save documents from your browser. Powered by Collabora Online."
 
 [runtime.container]
 image = "Dockerfile"
+# Cloud in a Bottle pulls this signed prebuilt image (built from the release tag's commit by CI) instead of building
+# `image`. If you fork this app and change it, comment this line out so your instance builds `image` instead.
+prebuilt_image = "registry.cloudinabottle.org/bottled-collabora"
 port = 8080
 
 [routing]
