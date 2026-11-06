@@ -146,6 +146,10 @@ spreadsheets.
 
 `OPENHOST_APP_NAME` and `OPENHOST_ZONE_DOMAIN` are read automatically.
 
+## Prebuilt image
+
+`cloudinabottle.toml` sets `prebuilt_image`, so Cloud in a Bottle pulls our signed prebuilt image (built by CI from each release tag) instead of building the Dockerfile. To fork and modify this app, comment out `prebuilt_image` so your instance builds from source.
+
 ## Layout
 
 ```
