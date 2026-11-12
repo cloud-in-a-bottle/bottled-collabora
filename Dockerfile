@@ -53,7 +53,7 @@ RUN ln -s /opt/collabora-blank-templates /opt/openhost-app/blank_templates \
 # Stage 2: the upstream image, unchanged, plus our files.
 # Pinned by tag and multi-arch index digest; bump both together.
 # ----------------------------------------------------------------------
-FROM docker.io/collabora/code:26.04.5.1.1@sha256:bb8f3c9c5c9016045f25fccb5f0649be94469ebc7c7cc379f3576e470cccf33d
+FROM docker.io/collabora/code:26.04.5.2.1@sha256:c7415b963e32eb0986a562583f154d36d3d7a461e1ddfb660a95e87094328acb
 
 # Same paths as in the build stage: the venv's interpreter is a symlink
 # into /opt/python.

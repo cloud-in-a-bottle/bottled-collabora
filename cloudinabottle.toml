@@ -1,6 +1,6 @@
 [app]
 name = "collabora"
-version = "1.0.0"
+version = "1.1.0"
 description = "Online office suite (Writer, Calc, Impress) with a built-in file manager — upload, edit, and save documents from your browser. Powered by Collabora Online."
 
 [runtime.container]
